@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Denpasar Urban Heat Map</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+  :root { --ink:#142720; --paper:#F5F6F1; --ochre:#C08A2E; --line:#D8DBCF; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); }
+  #map { position:absolute; inset:0; }
+  .panel { position:absolute; top:12px; left:12px; width:320px; max-width:calc(100% - 24px);
+           background:var(--paper); border:1px solid var(--line); border-radius:10px; padding:14px; box-shadow:0 2px 10px rgba(0,0,0,.15); z-index:2;
+           max-height:calc(100% - 24px); overflow-y:auto; }
+  .panel h1 { font-size:1rem; margin:0 0 4px; }
+  .panel p { font-size:.78rem; margin:0 0 10px; line-height:1.4; }
+  .toggle { display:flex; gap:6px; margin-bottom:10px; }
+  .toggle button { flex:1; padding:6px 8px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:.8rem; }
+  .toggle button.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .legend-bar { height:10px; border-radius:5px; margin:4px 0; }
+  .legend-labels { display:flex; justify-content:space-between; font-size:.72rem; }
+  .stats { margin-top:10px; font-size:.78rem; display:grid; grid-template-columns:1fr 1fr; gap:6px; text-align:center; }
+  .stats div { background:#fff; border:1px solid var(--line); border-radius:6px; padding:6px 2px; }
+  .stats b { display:block; font-size:.95rem; }
+  .finding { display:none; margin:0 0 10px; padding:8px 0; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .finding.show { display:block; }
+  .finding .f-top { display:flex; align-items:baseline; gap:8px; }
+  .finding .f-num { font-size:1.6rem; font-weight:700; line-height:1; font-variant-numeric:tabular-nums; }
+  .finding .f-cap { font-size:.74rem; opacity:.75; }
+  .finding .f-row { display:flex; justify-content:space-between; gap:8px; margin-top:5px; font-size:.76rem; font-variant-numeric:tabular-nums; }
+  .finding .f-row:first-of-type { margin-top:8px; }
+  .finding .f-row span:first-child { opacity:.75; }
+  .analysis { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); font-size:.78rem; }
+  .analysis summary { font-weight:600; cursor:pointer; }
+  .chart-wrap { position:relative; margin-top:8px; }
+  #scatter { display:block; width:100%; height:220px; background:#fff; border:1px solid var(--line); border-radius:6px; }
+  /* Panel kanan rapat ke tepi kanan; tombol zoom/kompas ada di kiri bawah (lihat placeNav) */
+  .panel-right { left:auto; right:12px; width:340px; }
+  /* Sisakan ruang di kiri bawah untuk tombol zoom, kompas, dan skala */
+  .panel-left { max-height:calc(100% - 164px); }
+  .panel-right details.analysis:first-of-type { margin-top:0; padding-top:0; border-top:0; }
+  /* Layar sempit: panel analisis pindah ke bawah peta */
+  @media (max-width: 900px){
+    .panel-left { max-height:calc(58% - 24px); }
+    .panel-right { left:12px; right:12px; top:auto; bottom:12px; width:auto; max-height:36%; }
+    .maplibregl-ctrl-bottom-left { bottom:calc(36% + 12px); }   /* skala peta naik di atas panel analisis */
+  }
+  .tip { position:absolute; display:none; pointer-events:none; z-index:3; white-space:nowrap; background:#fff; border:1px solid var(--line); border-radius:6px; padding:4px 8px; font-size:.72rem; box-shadow:0 2px 8px rgba(0,0,0,.15); }
+  .tip b { display:block; font-size:.9rem; }
+  .tip span { opacity:.75; }
+  table.cls { width:100%; border-collapse:collapse; margin-top:8px; font-size:.74rem; font-variant-numeric:tabular-nums; }
+  table.cls th, table.cls td { padding:3px 4px; text-align:right; border-bottom:1px solid var(--line); }
+  table.cls th:first-child, table.cls td:first-child { text-align:left; }
+  table.cls th { font-weight:600; }
+  .method { margin:8px 0 0; padding-left:16px; line-height:1.45; font-size:.72rem; }
+  .method li { margin-bottom:4px; }
+  .controls { margin-top:10px; font-size:.78rem; display:grid; gap:6px; }
+  .controls label { display:flex; align-items:center; gap:8px; }
+  .controls input[type=range] { flex:1; }
+  .note { font-size:.7rem; opacity:.75; margin-top:2px; }
+  .view { margin-top:12px; padding-top:10px; border-top:1px solid var(--line); }
+  .view-title { font-size:.78rem; font-weight:600; margin-bottom:6px; }
+  .presets { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; }
+  .presets button { padding:6px 4px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; font-size:.8rem; }
+  .presets button:hover { background:var(--ink); color:#fff; border-color:var(--ink); }
+  .view .note { margin-top:8px; line-height:1.4; }
+  .val { min-width:3em; text-align:right; font-variant-numeric:tabular-nums; }
+  .banner { display:none; margin-top:10px; padding:6px 8px; font-size:.72rem; line-height:1.4; background:#fff3d6; border:1px solid var(--ochre); border-radius:6px; }
+  .banner.show { display:block; }
+  .maplibregl-popup-content { font-size:.8rem; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="panel panel-left">
+  <h1>Denpasar Urban Heat Map</h1>
+  <p id="desc"></p>
+  <div class="finding" id="finding"></div>
+  <div class="toggle">
+    <button id="btn-lst" class="active">Surface temp. (LST)</button>
+    <button id="btn-ndvi">Vegetation (NDVI)</button>
+  </div>
+  <div class="legend-bar" id="legend-bar"></div>
+  <div class="legend-labels"><span id="lg-min"></span><span id="lg-unit"></span><span id="lg-max"></span></div>
+  <div class="note" id="height-note"></div>
+  <div class="stats">
+    <div><b id="st-mean">-</b>mean</div>
+    <div><b id="st-max">-</b>max</div>
+    <div><b id="st-n">-</b>points</div>
+    <div><b id="st-hot">-</b><span id="st-hot-l"></span></div>
+  </div>
+  <div class="controls">
+    <label>Tinggi <input type="range" id="exag" min="0.2" max="2.5" step="0.1" value="1"> <span id="exag-val">1.0x</span></label>
+    <label><input type="checkbox" id="chk-base"> Tampilkan bangunan basemap</label>
+  </div>
+  <div class="view">
+    <div class="view-title">Sudut pandang 3D</div>
+    <div class="presets">
+      <button type="button" data-view="top">Atas</button>
+      <button type="button" data-view="angle">Miring</button>
+      <button type="button" data-view="side">Samping</button>
+    </div>
+    <div class="controls">
+      <label>Kemiringan <input type="range" id="pitch" min="0" max="85" step="1" value="55"> <span class="val" id="pitch-val">55°</span></label>
+      <label>Rotasi <input type="range" id="bearing" min="-180" max="180" step="1" value="-20"> <span class="val" id="bearing-val">-20°</span></label>
+      <label><input type="checkbox" id="chk-spin"> Putar otomatis</label>
+    </div>
+    <div class="note">Atau seret peta dengan klik kanan (atau Ctrl + seret) untuk memutar dan memiringkan. Di layar sentuh, geser dua jari.</div>
+  </div>
+  <div class="banner" id="demo-banner"></div>
+</div>
+
+<aside class="panel panel-right" id="analysis-panel">
+  <details class="analysis" open>
+    <summary>Hubungan LST dan NDVI</summary>
+    <div class="chart-wrap">
+      <canvas id="scatter" role="img" aria-label="Diagram sebar suhu permukaan (LST) terhadap NDVI"></canvas>
+      <div class="tip" id="tip"><b></b><span></span></div>
+    </div>
+    <div class="note" id="scatter-note"></div>
+    <table class="cls" id="cls-table">
+      <caption class="note" style="text-align:left;caption-side:top;margin-top:8px">LST rata-rata per kelas NDVI</caption>
+      <thead><tr><th>Kelas NDVI</th><th>Titik</th><th>LST rata-rata</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </details>
+  <details class="analysis">
+    <summary>Metode dan keterbatasan</summary>
+    <ul class="method" id="method-list"></ul>
+  </details>
+</aside>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+// ---------- Settings you may want to change ----------
+const CENTER = [115.2126, -8.6705];          // [longitude, latitude]
+const PERIOD = 'Jan - Sep 2026';              // must match filterDate in the Earth Engine script
+const POINTS_FILE    = 'data/denpasar_points.geojson';     // required for real data
+const AOI_FILE       = 'data/denpasar_aoi.geojson';        // optional boundary line
+const BUILDINGS_FILE = 'data/denpasar_buildings.geojson';  // optional 3D buildings (needs LST/NDVI props)
+const CELL_FILL = 0.9;   // ukuran kolom relatif terhadap jarak antar titik (0.9 = ada celah tipis)
+const HOT_THRESHOLD = 40;   // °C, batas "area panas" untuk angka ringkas
+const SPARSE_MAX = 0.3;     // NDVI di bawah ini dianggap vegetasi jarang
+const DENSE_MIN  = 0.6;     // NDVI di atas ini dianggap vegetasi rapat
+const SAMPLE_M   = 100;     // jarak antar titik (m); samakan dengan SCALE di skrip Earth Engine
+// ------------------------------------------------------
+
+// hmax = tinggi kolom (meter) di nilai maksimum legenda, sebelum dikali slider.
+// Diturunkan ke 150 supaya kolom 30 m tidak berbentuk jarum; naikkan lewat slider "Tinggi" bila perlu.
+const LAYERS = {
+  LST:  { prop:'LST',  unit:'°C', min:24, max:42, hmax:150,
+          colors:['#313695','#74add1','#fee090','#f46d43','#a50026'],
+          desc:'Land surface temperature (Landsat 8), ' + PERIOD + '.', fmt:v=>v.toFixed(1)+' °C' },
+  NDVI: { prop:'NDVI', unit:'index', min:0, max:0.8, hmax:150,
+          colors:['#a50026','#fdae61','#ffffbf','#a6d96a','#1a9850'],
+          desc:'Vegetation index NDVI (Landsat 8), ' + PERIOD + '.', fmt:v=>v.toFixed(2) }
+};
+let current = 'LST';
+let exag = 1;
+let data = null;
+let baseBuildingLayers = [];
+let dataBounds = null;   // batas data, dipakai tombol sudut pandang
+
+// Seeded random so the demo data is stable between reloads
+function rng(seed){ return function(){ seed = (seed*16807)%2147483647; return (seed-1)/2147483646; }; }
+
+function demoData(){
+  const r = rng(42), feats = [];
+  for(let i=0;i<2600;i++){
+    const lon = 115.15 + r()*0.15, lat = -8.78 + r()*0.18;
+    const d = Math.hypot((lon-CENTER[0])/0.06, (lat-CENTER[1])/0.07);
+    const urban = Math.max(0, 1-d);
+    const lst = 29 + 10*urban + (r()-0.5)*3;
+    const ndvi = Math.max(0, 0.65 - 0.5*urban + (r()-0.5)*0.15);
+    feats.push({type:'Feature', properties:{LST:+lst.toFixed(2), NDVI:+ndvi.toFixed(3)}, geometry:{type:'Point', coordinates:[lon,lat]}});
+  }
+  return {type:'FeatureCollection', features:feats};
+}
+
+const map = new maplibregl.Map({
+  container:'map',
+  style:'https://tiles.openfreemap.org/styles/liberty',
+  center:CENTER, zoom:12, pitch:55, bearing:-20, maxPitch:85
+});
+// Skala ditambah dulu agar tetap paling bawah; tombol zoom/kompas ada di atasnya.
+// Layar lebar: tombol di kiri bawah (kanan dipakai panel analisis). Layar sempit: kanan atas.
+map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
+const navCtrl = new maplibregl.NavigationControl({ visualizePitch:true });
+const NAV_WIDE = window.matchMedia('(min-width: 901px)');   // breakpoint sama dengan CSS
+let navAdded = false;
+function placeNav(){
+  if(navAdded) map.removeControl(navCtrl);
+  map.addControl(navCtrl, NAV_WIDE.matches ? 'bottom-left' : 'top-right');
+  navAdded = true;
+}
+placeNav();
+NAV_WIDE.addEventListener('change', placeNav);
+map.on('error', e => console.warn('Map error:', e && e.error ? e.error : e));
+
+// ---- Expressions: warna dan tinggi sama-sama dari nilai LST / NDVI ----
+function colorExpr(key){
+  const L = LAYERS[key], n = L.colors.length - 1, stops = [];
+  L.colors.forEach((c,i)=>{ stops.push(L.min + (L.max-L.min)*i/n, c); });
+  return ['interpolate',['linear'],['get',L.prop],...stops];
+}
+function heightExpr(key){
+  const L = LAYERS[key];
+  return ['interpolate',['linear'],['get',L.prop], L.min, 5, L.max, L.hmax*exag];
+}
+
+// ---- Normalisasi data: terima nama properti alternatif, ubah Kelvin ke Celsius ----
+function readNum(p, keys){
+  for(const k of keys){
+    const raw = p[k];
+    if(raw === null || raw === undefined || raw === '') continue;
+    const v = Number(raw);
+    if(isFinite(v)) return v;
+  }
+  return null;
+}
+
+function normalize(fc){
+  const feats = [];
+  let dropped = 0;
+  (fc.features || []).forEach(f=>{
+    if(!f.geometry || f.geometry.type !== 'Point'){ dropped++; return; }
+    const p = f.properties || {};
+    let lst = readNum(p, ['LST','LST_Celsius','LST_C','lst']);
+    const ndvi = readNum(p, ['NDVI','ndvi']);
+    if(lst === null || ndvi === null){ dropped++; return; }
+    if(lst > 200) lst -= 273.15;   // nilai Kelvin -> Celsius
+    feats.push({ type:'Feature', properties:{ LST:lst, NDVI:ndvi }, geometry:f.geometry });
+  });
+  if(dropped) console.warn(dropped + ' titik dilewati (bukan Point, atau LST/NDVI tidak valid). Cek nama properti di GeoJSON.');
+  return { type:'FeatureCollection', features:feats };
+}
+
+// ---- Titik -> kotak (polygon) supaya bisa di-extrude ----
+// Estimasi jarak antar titik: median jarak tetangga terdekat, dipercepat dengan bucket grid
+function estimateStep(fc){
+  const pts = fc.features.map(f=>f.geometry.coordinates);
+  const n = pts.length;
+  if(n < 2) return 0.001;
+  let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+  for(const p of pts){
+    if(p[0]<minX) minX=p[0]; if(p[0]>maxX) maxX=p[0];
+    if(p[1]<minY) minY=p[1]; if(p[1]>maxY) maxY=p[1];
+  }
+  const cs = Math.sqrt(((maxX-minX)||0.001) * ((maxY-minY)||0.001) / n) * 2 || 0.001;
+  const key = (cx,cy)=> cx + ',' + cy;
+  const buckets = new Map();
+  pts.forEach((p,i)=>{
+    const k = key(Math.floor((p[0]-minX)/cs), Math.floor((p[1]-minY)/cs));
+    if(!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push(i);
+  });
+  const stride = Math.max(1, Math.floor(n/400));
+  const nn = [];
+  for(let i=0;i<n;i+=stride){
+    const a = pts[i];
+    const cx = Math.floor((a[0]-minX)/cs), cy = Math.floor((a[1]-minY)/cs);
+    let best = Infinity;
+    for(let dx=-1; dx<=1; dx++){
+      for(let dy=-1; dy<=1; dy++){
+        const list = buckets.get(key(cx+dx, cy+dy));
+        if(!list) continue;
+        for(const j of list){
+          if(j === i) continue;
+          const b = pts[j];
+          const d = Math.hypot(a[0]-b[0], a[1]-b[1]);
+          if(d > 0 && d < best) best = d;
+        }
+      }
+    }
+    if(isFinite(best)) nn.push(best);
+  }
+  nn.sort((x,y)=>x-y);
+  return nn.length ? nn[Math.floor(nn.length/2)] : cs/2;
+}
+
+function toGrid(fc){
+  const half = estimateStep(fc) * CELL_FILL / 2;
+  const feats = fc.features.map(f=>{
+    const p = f.properties;
+    const [x,y] = f.geometry.coordinates;
+    return { type:'Feature', properties:{ LST:p.LST, NDVI:p.NDVI },
+      geometry:{ type:'Polygon', coordinates:[[[x-half,y-half],[x+half,y-half],[x+half,y+half],[x-half,y+half],[x-half,y-half]]] }};
+  });
+  return { type:'FeatureCollection', features:feats };
+}
+
+function showBanner(reason){
+  const el = document.getElementById('demo-banner');
+  el.innerHTML = '<b>DEMO DATA.</b> Gagal memuat <code></code>. Nilai yang tampil sintetis. <span class="why"></span>';
+  el.querySelector('code').textContent = POINTS_FILE;
+  el.querySelector('.why').textContent = 'Penyebab: ' + reason + '. Buka lewat server lokal (bukan file://) dan cek Console (F12).';
+  el.classList.add('show');
+}
+
+function updateLegend(){
+  const L = LAYERS[current];
+  document.getElementById('legend-bar').style.background = 'linear-gradient(to right,'+L.colors.join(',')+')';
+  document.getElementById('lg-min').textContent = L.min;
+  document.getElementById('lg-max').textContent = L.max;
+  document.getElementById('lg-unit').textContent = L.unit;
+  document.getElementById('desc').textContent = L.desc;
+  document.getElementById('height-note').textContent = 'Warna dan tinggi kolom sama-sama mengikuti ' + current + '.';
+}
+
+function updateStats(){
+  const L = LAYERS[current];
+  const v = data.features.map(f=>f.properties[L.prop]).filter(x=>typeof x==='number' && !isNaN(x));
+  if(!v.length) return;
+  const mean = v.reduce((a,b)=>a+b, 0) / v.length;
+  // reduce, bukan Math.max(...v): spread meledak untuk puluhan ribu titik
+  const max = v.reduce((a,b)=> b > a ? b : a, -Infinity);
+  document.getElementById('st-mean').textContent = L.fmt(mean);
+  document.getElementById('st-max').textContent = L.fmt(max);
+  document.getElementById('st-n').textContent = v.length.toLocaleString('en-US');
+  // persentase titik "panas" selalu dihitung dari LST, apa pun lapisan yang aktif
+  const lst = data.features.map(f=>f.properties.LST).filter(x=>typeof x==='number' && !isNaN(x));
+  if(lst.length){
+    document.getElementById('st-hot').textContent = (100 * lst.filter(x=>x >= HOT_THRESHOLD).length / lst.length).toFixed(1) + '%';
+    document.getElementById('st-hot-l').textContent = 'area ≥ ' + HOT_THRESHOLD + ' °C';
+  }
+}
+
+function applyStyle(){
+  if (map.getLayer('grid-3d')) {
+    map.setPaintProperty('grid-3d','fill-extrusion-color', colorExpr(current));
+    map.setPaintProperty('grid-3d','fill-extrusion-height', heightExpr(current));
+  }
+  if (map.getLayer('buildings-3d')) {
+    map.setPaintProperty('buildings-3d','fill-extrusion-color', colorExpr(current));
+  }
+}
+
+function setLayer(key){
+  current = key;
+  applyStyle();
+  document.getElementById('btn-lst').classList.toggle('active', key==='LST');
+  document.getElementById('btn-ndvi').classList.toggle('active', key==='NDVI');
+  updateLegend(); updateStats();
+}
+
+function setBaseBuildings(show){
+  baseBuildingLayers.forEach(id=>{
+    map.setLayoutProperty(id, 'visibility', show ? 'visible' : 'none');
+  });
+}
+
+async function loadJSON(url){
+  const res = await fetch(url);
+  if(!res.ok) throw new Error('file tidak ditemukan (HTTP ' + res.status + ')');
+  return res.json();
+}
+
+map.on('load', async ()=>{
+  // 0. Bangunan 3D bawaan basemap: catat id-nya, sembunyikan default (tidak punya nilai LST/NDVI)
+  baseBuildingLayers = map.getStyle().layers
+    .filter(l => l.type === 'fill-extrusion')
+    .map(l => l.id);
+  setBaseBuildings(false);
+
+  // 1. Main data (points of LST and NDVI)
+  try {
+    data = normalize(await loadJSON(POINTS_FILE));
+    if(!data.features.length) throw new Error('tidak ada titik dengan nilai LST dan NDVI yang valid');
+  } catch(e) {
+    console.warn('Gagal memuat ' + POINTS_FILE, e);
+    data = demoData();
+    showBanner(e && e.message ? e.message : String(e));
+  }
+
+  // 2. Zoom to the data (pitch/bearing dipertahankan)
+  const b = new maplibregl.LngLatBounds();
+  data.features.forEach(f => b.extend(f.geometry.coordinates));
+  dataBounds = b;
+  map.fitBounds(b, { padding:viewPadding(), maxZoom:15, duration:0, pitch:55, bearing:-20 });
+
+  // 3. Optional: bangunan sendiri (harus punya properti LST/NDVI + height)
+  try {
+    const bld = await loadJSON(BUILDINGS_FILE);
+    map.addSource('bld', { type:'geojson', data: bld });
+    map.addLayer({ id:'buildings-3d', type:'fill-extrusion', source:'bld', paint:{
+      'fill-extrusion-color': colorExpr(current),
+      'fill-extrusion-height': ['to-number', ['get','height'], 6],
+      'fill-extrusion-opacity': 0.9 }});
+  } catch(e) { /* optional file, ignore if missing */ }
+
+  // 4. Kolom 3D: tinggi + warna dari LST / NDVI
+  map.addSource('grid', { type:'geojson', data: toGrid(data) });
+  map.addLayer({ id:'grid-3d', type:'fill-extrusion', source:'grid', paint:{
+    'fill-extrusion-color': colorExpr(current),
+    'fill-extrusion-height': heightExpr(current),
+    'fill-extrusion-base': 0,
+    'fill-extrusion-opacity': 0.88 }});
+
+  // 5. Optional: boundary line
+  try {
+    const aoi = await loadJSON(AOI_FILE);
+    map.addSource('aoi', { type:'geojson', data: aoi });
+    map.addLayer({ id:'aoi-line', type:'line', source:'aoi',
+      paint:{ 'line-color':'#142720', 'line-width':2 } });
+  } catch(e) { /* optional file, ignore if missing */ }
+
+  // 6. Pencahayaan supaya sisi kolom terlihat 3D
+  map.setLight({ anchor:'viewport', position:[1.4, 200, 50], intensity:0.45, color:'#ffffff' });
+
+  // 7. Popup on click
+  map.on('click','grid-3d',e=>{
+    const p = e.features[0].properties;
+    new maplibregl.Popup().setLngLat(e.lngLat)
+      .setHTML('<b>LST:</b> '+Number(p.LST).toFixed(1)+' °C<br><b>NDVI:</b> '+Number(p.NDVI).toFixed(2))
+      .addTo(map);
+  });
+  map.on('mouseenter','grid-3d',()=>map.getCanvas().style.cursor='pointer');
+  map.on('mouseleave','grid-3d',()=>map.getCanvas().style.cursor='');
+
+  analysis = analyze(data);
+  renderAnalysis();
+  updateLegend(); updateStats();
+});
+
+document.getElementById('btn-lst').onclick  = ()=>setLayer('LST');
+document.getElementById('btn-ndvi').onclick = ()=>setLayer('NDVI');
+document.getElementById('exag').oninput = e=>{
+  exag = parseFloat(e.target.value);
+  document.getElementById('exag-val').textContent = exag.toFixed(1) + 'x';
+  applyStyle();
+};
+document.getElementById('chk-base').onchange = e=>setBaseBuildings(e.target.checked);
+
+// ---- Kontrol sudut pandang 3D ----
+const pitchEl = document.getElementById('pitch');
+const bearEl  = document.getElementById('bearing');
+const spinEl  = document.getElementById('chk-spin');
+const SPIN_DEG_PER_MS = 0.006;      // 6 derajat per detik
+let spinning = false, spinLast = 0;
+
+function syncView(){
+  const p = Math.round(map.getPitch()), b = Math.round(map.getBearing());
+  pitchEl.value = p;
+  bearEl.value = b;
+  document.getElementById('pitch-val').textContent = p + '°';
+  document.getElementById('bearing-val').textContent = b + '°';
+}
+
+function stopSpin(){
+  spinning = false;
+  spinEl.checked = false;
+}
+
+function spinFrame(t){
+  if(!spinning) return;
+  if(spinLast) map.setBearing(map.getBearing() + (t - spinLast) * SPIN_DEG_PER_MS);
+  spinLast = t;
+  requestAnimationFrame(spinFrame);
+}
+
+// Ruang kosong di tepi peta supaya data tidak tertutup panel (breakpoint sama dengan CSS)
+function viewPadding(){
+  return window.innerWidth > 900
+    ? { top:60, bottom:60, left:350, right:370 }                                        // panel kiri dan kanan
+    : { top:60, bottom:Math.round(window.innerHeight*0.36) + 30, left:60, right:60 };   // panel analisis di bawah
+}
+
+function goView(name){
+  stopSpin();
+  const pad = viewPadding();
+  const frame = (pitch, bearing) => dataBounds
+    ? map.fitBounds(dataBounds, { padding:pad, maxZoom:15, pitch:pitch, bearing:bearing, duration:800 })
+    : map.easeTo({ pitch:pitch, bearing:bearing, duration:800 });
+  if(name === 'top')   frame(0, 0);
+  if(name === 'angle') frame(55, -20);
+  if(name === 'side')  map.easeTo({ pitch:80, bearing:0, duration:800 });
+}
+
+document.querySelectorAll('.presets button').forEach(btn => { btn.onclick = () => goView(btn.dataset.view); });
+pitchEl.oninput = e => { stopSpin(); map.setPitch(parseFloat(e.target.value)); };
+bearEl.oninput  = e => { stopSpin(); map.setBearing(parseFloat(e.target.value)); };
+spinEl.onchange = e => {
+  spinning = e.target.checked;
+  spinLast = 0;
+  if(spinning) requestAnimationFrame(spinFrame);
+};
+map.on('move', syncView);                       // penggeser ikut berubah saat peta diseret
+map.on('load', syncView);
+['mousedown','touchstart','wheel'].forEach(ev => map.on(ev, stopSpin));   // berhenti berputar bila peta disentuh
+// ---- end kontrol sudut pandang ----
+
+// ---- Dashboard: temuan, diagram sebar LST-NDVI, tabel kelas, metode ----
+const INK = '#142720', MUTED = '#5E6B64', GRID = '#E4E7DC', DOT = 'rgba(165,112,29,0.28)', DOT_HOVER = '#A5701D';
+let analysis = null;      // hasil analyze(), dihitung sekali per dataset
+let scatterPts = null;    // posisi layar tiap titik (untuk hover)
+let hoverIdx = -1;
+
+function mean(a){ return a.reduce((s,x)=>s+x, 0) / a.length; }
+
+// NDVI di luar 0..1 (air, nilai tidak valid) dikeluarkan dari tren, tabel, dan diagram sebar
+function analyze(fc){
+  const all = fc.features.map(f => [f.properties.NDVI, f.properties.LST]);
+  const valid = all.filter(p => p[0] >= 0 && p[0] <= 1);
+  const res = { n: all.length, valid, nValid: valid.length, excluded: all.length - valid.length,
+                below1: all.filter(p => p[0] < -1).length };
+  if(valid.length > 2){
+    const mx = mean(valid.map(p => p[0])), my = mean(valid.map(p => p[1]));
+    let sxx = 0, syy = 0, sxy = 0;
+    valid.forEach(p => { sxx += (p[0]-mx)*(p[0]-mx); syy += (p[1]-my)*(p[1]-my); sxy += (p[0]-mx)*(p[1]-my); });
+    if(sxx > 0 && syy > 0){ res.slope = sxy/sxx; res.intercept = my - res.slope*mx; res.r = sxy/Math.sqrt(sxx*syy); }
+  }
+  const sp = valid.filter(p => p[0] < SPARSE_MAX).map(p => p[1]);
+  const dn = valid.filter(p => p[0] >= DENSE_MIN).map(p => p[1]);
+  if(sp.length && dn.length){ res.sparse = { n: sp.length, mean: mean(sp) }; res.dense = { n: dn.length, mean: mean(dn) }; }
+  res.classes = [[0,0.2],[0.2,0.4],[0.4,0.6],[0.6,0.8],[0.8,1.0000001]].map(([lo,hi]) => {
+    const g = valid.filter(p => p[0] >= lo && p[0] < hi).map(p => p[1]);
+    return { lo, hi: Math.min(hi, 1), n: g.length, mean: g.length ? mean(g) : null };
+  });
+  return res;
+}
+
+function renderAnalysis(){
+  const A = analysis;
+  // 1. kalimat temuan
+  const f = document.getElementById('finding');
+  if(A.sparse && A.dense){
+    const d = A.sparse.mean - A.dense.mean;
+    f.innerHTML =
+      '<div class="f-top"><span class="f-num">' + (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1) + ' °C</span>' +
+      '<span class="f-cap">' + (d >= 0 ? 'lebih panas di lahan minim vegetasi' : 'lebih sejuk di lahan minim vegetasi') + '</span></div>' +
+      '<div class="f-row"><span>NDVI &lt; ' + SPARSE_MAX + '</span><b>' + A.sparse.mean.toFixed(1) + ' °C</b></div>' +
+      '<div class="f-row"><span>NDVI ≥ ' + DENSE_MIN + '</span><b>' + A.dense.mean.toFixed(1) + ' °C</b></div>';
+    f.classList.add('show');
+  } else {
+    f.classList.remove('show');
+  }
+  // 2. catatan di bawah diagram sebar
+  const parts = ['Tiap titik adalah satu piksel ' + SAMPLE_M + ' m.'];
+  if(A.r !== undefined){
+    parts.push('Garis tren: r = ' + A.r.toFixed(2) + ', R² = ' + (A.r*A.r).toFixed(2) + '. Tiap kenaikan NDVI 0.1, LST ' +
+      (A.slope < 0 ? 'turun' : 'naik') + ' sekitar ' + Math.abs(A.slope*0.1).toFixed(1) + ' °C.');
+  }
+  if(A.excluded > 0){
+    parts.push(A.excluded.toLocaleString('en-US') + ' titik (' + (100*A.excluded/A.n).toFixed(1) + '%) dengan NDVI < 0 tidak ditampilkan dan tidak dipakai: kemungkinan badan air atau nilai tidak valid' +
+      (A.below1 ? ' (' + A.below1 + ' di antaranya di bawah -1, di luar rentang NDVI yang mungkin)' : '') + '.');
+  }
+  document.getElementById('scatter-note').textContent = parts.join(' ');
+  document.getElementById('scatter').setAttribute('aria-label', 'Diagram sebar suhu permukaan (LST) terhadap NDVI' +
+    (A.r !== undefined ? ', korelasi r = ' + A.r.toFixed(2) : '') + '. Angka per kelas NDVI ada di tabel di bawahnya.');
+  // 3. tabel kelas NDVI (juga berfungsi sebagai tampilan tabel untuk diagram)
+  const tb = document.querySelector('#cls-table tbody');
+  tb.replaceChildren();
+  A.classes.forEach(c => {
+    const tr = document.createElement('tr');
+    [c.lo.toFixed(1) + ' – ' + c.hi.toFixed(1),
+     c.n.toLocaleString('en-US') + ' (' + (A.nValid ? Math.round(100*c.n/A.nValid) : 0) + '%)',
+     c.mean === null ? '-' : c.mean.toFixed(1) + ' °C'
+    ].forEach(t => { const td = document.createElement('td'); td.textContent = t; tr.appendChild(td); });
+    tb.appendChild(tr);
+  });
+  // 4. metode dan keterbatasan
+  const ul = document.getElementById('method-list');
+  ul.replaceChildren();
+  const km2 = A.n * (SAMPLE_M/1000) * (SAMPLE_M/1000);
+  [
+    'Data: Landsat 8 Collection 2 Level 2, komposit median ' + PERIOD + '; awan dan bayangan awan dimasker.',
+    'LST dari band termal ST_B10 (°C); NDVI dari band SR_B5 dan SR_B4.',
+    'Sampel: ' + A.n.toLocaleString('en-US') + ' titik grid beraturan tiap ' + SAMPLE_M + ' m (resolusi asli band termal), kira-kira ' + Math.round(km2) + ' km².',
+    'LST adalah suhu permukaan, bukan suhu udara, dan berasal dari satu komposit periode, bukan rata-rata tahunan.',
+    'Hubungan LST dan NDVI adalah korelasi, bukan sebab-akibat. Suhu juga dipengaruhi kedekatan dengan laut, ketinggian, dan jenis permukaan lain.'
+  ].forEach(t => { const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+  drawScatter();
+}
+
+// Skala sumbu Y: paling banyak 6 tick bulat
+function yScale(valid){
+  let lo = Infinity, hi = -Infinity;
+  valid.forEach(p => { if(p[1] < lo) lo = p[1]; if(p[1] > hi) hi = p[1]; });
+  lo = Math.floor(lo); hi = Math.ceil(hi);
+  if(hi <= lo) hi = lo + 1;
+  for(const step of [1,2,4,5,10,20,50]){
+    const a = Math.floor(lo/step)*step, b = Math.ceil(hi/step)*step;
+    if((b-a)/step + 1 <= 6) return { min:a, max:b, step:step };
+  }
+  return { min:lo, max:hi, step:hi-lo };
+}
+
+function drawScatter(){
+  const cv = document.getElementById('scatter');
+  if(!analysis || !analysis.valid.length) return;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if(!w || !h) return;                               // <details> tertutup: gambar saat dibuka
+  const dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const m = { l:38, r:10, t:10, b:36 };
+  const ys = yScale(analysis.valid);
+  const X = v => m.l + v*(w - m.l - m.r);
+  const Y = v => h - m.b - (v - ys.min)/(ys.max - ys.min)*(h - m.t - m.b);
+
+  // grid tipis dan label sumbu (teks memakai warna teks, bukan warna data)
+  ctx.font = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+  ctx.lineWidth = 1; ctx.strokeStyle = GRID; ctx.fillStyle = MUTED;
+  ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  for(let v = ys.min; v <= ys.max + 1e-9; v += ys.step){
+    const y = Math.round(Y(v)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(m.l, y); ctx.lineTo(w - m.r, y); ctx.stroke();
+    ctx.fillText(String(v), m.l - 6, y);
+  }
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  [0, 0.2, 0.4, 0.6, 0.8, 1].forEach(v => ctx.fillText(v.toFixed(1), X(v), h - m.b + 6));
+  ctx.fillText('NDVI', X(0.5), h - m.b + 20);
+  ctx.save();
+  ctx.translate(11, (m.t + h - m.b)/2); ctx.rotate(-Math.PI/2);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('LST (°C)', 0, 0);
+  ctx.restore();
+
+  // titik; posisi layar disimpan untuk mencari titik terdekat saat hover
+  const pts = analysis.valid;
+  scatterPts = new Float32Array(pts.length*2);
+  ctx.fillStyle = DOT;
+  let minX = Infinity, maxX = -Infinity;
+  pts.forEach((p, i) => {
+    const x = X(p[0]), y = Y(p[1]);
+    scatterPts[2*i] = x; scatterPts[2*i + 1] = y;
+    if(p[0] < minX) minX = p[0];
+    if(p[0] > maxX) maxX = p[0];
+    ctx.beginPath(); ctx.arc(x, y, 1.8, 0, Math.PI*2); ctx.fill();
+  });
+
+  // garis tren 2 px, dipotong di area plot
+  if(analysis.slope !== undefined){
+    ctx.save();
+    ctx.beginPath(); ctx.rect(m.l, m.t, w - m.l - m.r, h - m.t - m.b); ctx.clip();
+    ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(X(minX), Y(analysis.intercept + analysis.slope*minX));
+    ctx.lineTo(X(maxX), Y(analysis.intercept + analysis.slope*maxX));
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // titik yang sedang di-hover: cincin putih 2 px agar tetap terbaca di atas titik lain
+  if(hoverIdx >= 0 && hoverIdx < pts.length){
+    const x = scatterPts[2*hoverIdx], y = scatterPts[2*hoverIdx + 1];
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI*2); ctx.fillStyle = DOT_HOVER; ctx.fill();
+  }
+}
+
+// Hover: titik terdekat dalam radius 14 px (target hover lebih besar dari titiknya)
+function nearestPoint(mx, my){
+  if(!scatterPts) return -1;
+  let best = -1, bd = 14*14;
+  for(let i = 0; i < scatterPts.length; i += 2){
+    const dx = scatterPts[i] - mx, dy = scatterPts[i+1] - my, d = dx*dx + dy*dy;
+    if(d < bd){ bd = d; best = i/2; }
+  }
+  return best;
+}
+
+(function wireScatter(){
+  const cv = document.getElementById('scatter'), tip = document.getElementById('tip');
+  function hide(){
+    tip.style.display = 'none';
+    if(hoverIdx !== -1){ hoverIdx = -1; drawScatter(); }
+  }
+  cv.addEventListener('pointermove', e => {
+    if(!analysis) return;
+    const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    const i = nearestPoint(mx, my);
+    if(i < 0){ hide(); return; }
+    if(i !== hoverIdx){ hoverIdx = i; drawScatter(); }
+    const p = analysis.valid[i];
+    tip.querySelector('b').textContent = p[1].toFixed(1) + ' °C';
+    tip.querySelector('span').textContent = 'NDVI ' + p[0].toFixed(2);
+    tip.style.display = 'block';
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.max(0, Math.min(mx + 12, r.width - tw)) + 'px';
+    tip.style.top  = Math.max(0, my - th - 10) + 'px';
+  });
+  cv.addEventListener('pointerleave', hide);
+  document.querySelectorAll('details.analysis').forEach(d => d.addEventListener('toggle', drawScatter));
+  window.addEventListener('resize', drawScatter);
+})();
+// ---- end dashboard ----
+</script>
+</body>
+</html>
